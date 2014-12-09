@@ -27,7 +27,7 @@ import vibe.stream.operations;
 
 /// Settings to configure the package registry.
 class DubRegistrySettings {
-	string databaseName = "vpmreg";
+	string databaseName = "vpmreg_staging";
 }
 
 class DubRegistry {

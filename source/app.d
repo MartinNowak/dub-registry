@@ -52,9 +52,9 @@ shared static this()
 	// user management
 	auto udbsettings = new UserManSettings;
 	udbsettings.serviceName = "DUB - The D package registry";
-	udbsettings.serviceUrl = URL("http://code.dlang.org/");
-	udbsettings.serviceEmail = "noreply@vibed.org";
-	udbsettings.databaseURL = "mongodb://127.0.0.1:27017/vpmreg";
+	udbsettings.serviceUrl = URL("https://dub.staging.dawg.eu/");
+	udbsettings.serviceEmail = "noreply@dawg.eu";
+	udbsettings.databaseURL = "mongodb://127.0.0.1:27017/vpmreg_staging";
 	udbsettings.requireAccountValidation = false;
 	auto userdb = createUserManController(udbsettings);
 
@@ -68,7 +68,7 @@ shared static this()
 
 	// start the web server
  	auto settings = new HTTPServerSettings;
-	settings.hostName = "code.dlang.org";
+	settings.hostName = "dub.staging.dawg.eu";
 	settings.bindAddresses = ["127.0.0.1"];
 	settings.port = 8005;
 	settings.sessionStore = new MemorySessionStore;
