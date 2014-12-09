@@ -13,7 +13,7 @@ GROUP=${NAME}
 CMD="${DIR}/${NAME} -v"
 
 # build
-dub build -b ${BUILD} #--force
+dub build -b ${BUILD} -d DubRegistryStaging #--force
 
 # systemd
 cat > ${NAME}.service <<EOF

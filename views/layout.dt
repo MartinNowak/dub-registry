@@ -3,7 +3,11 @@ html
 	head
 		block css
 		link(rel="stylesheet", type="text/css", href="#{req.rootDir}styles/common.css")
-
+		//- override background to distinguish staging server
+		- debug
+			style div#header { background-color: pink; background-image: none; }
+		- else debug(DubRegistryStaging)
+			style div#header { background-color: lightgreen; background-image: none; }
 		link(rel="shortcut icon", href="#{req.rootDir}favicon.ico")
 		block title
 		title= title ~ " - DUB - The D package registry"
