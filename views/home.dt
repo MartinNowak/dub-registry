@@ -12,6 +12,8 @@ block title
 block body
 	p Welcome to DUB, the D package registry. The following list shows all available packages:
 
+	p Found #{results.length} packages.
+
 	- auto category = req.query.get("category", null);
 	- auto sort_mode = req.query.get("sort", "updated");
 	form#category-form(method="GET", action="")
@@ -48,33 +50,29 @@ block body
 					th
 						a(href="?sort=#{cp[0]}&category=#{category}")= cp[1]
 
-		- foreach( pl; packages )
-			- if( pl.versions.length )
-				- auto p = getBestVersion(pl.versions);
-				- auto desc = p.description.opt!string;
-				- auto ver = p["version"].opt!string();
-				tr
-					td
-						- string image;
-						- if (pl.categories.length)
-							- if (auto pc = pl.categories[0].get!string in categoryMap)
-								- image = pc.imageName;
-						- if (!image.length) image = "unknown";
-						img.category-icon(src="images/categories/#{image}.png", title=image.replace(".", "/"))
-						a(href="packages/#{pl.name.get!string}")= pl.name.get!string
-					td.nobreak
-						- if (ver.length <= 20)
-							|= ver
-						- else
-							| #{ver[0 .. 18]}&hellip;
-						span.dull.nobreak(title=formatDateTime(p.date))<> , #{formatFuzzyDate(p.date)}
-					td.nobreak(title=formatDateTime(pl.dateAdded))= formatDate(pl.dateAdded)
-					- if (desc.length <= 100)
-						td= desc
+		- foreach (p; results)
+			- auto desc = p.info["description"].opt!string;
+			- auto ver = p.version_;
+			tr
+				td
+					- string image;
+					- if (auto pc = p.category in categoryMap)
+						- image = pc.imageName;
 					- else
-						td #{desc[0 .. 98]}&hellip;
-
-	p Found #{packages.length} packages.
+						- image = image = "unknown";
+					img.category-icon(src="images/categories/#{image}.png", title=image.replace(".", "/"))
+					a(href="packages/#{p.name}")= p.name
+				td.nobreak
+					- if (ver.length <= 20)
+						|= ver
+					- else
+						| #{ver[0 .. 18]}&hellip;
+					span.dull.nobreak(title=formatDateTime(p.date))<> , #{formatFuzzyDate(p.date)}
+				td.nobreak(title=formatDateTime(p.dateAdded))= formatDate(p.dateAdded)
+				- if (desc.length <= 100)
+					td= desc
+				- else
+					td #{desc[0 .. 98]}&hellip;
 
 	- if( req.session )
 		p

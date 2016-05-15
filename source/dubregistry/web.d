@@ -12,7 +12,7 @@ import dubregistry.registry;
 import dubregistry.viewutils; // dummy import to make rdmd happy
 
 import dub.semver;
-import std.algorithm : sort, startsWith;
+import std.algorithm : partition, sort, startsWith, SwapStrategy;
 import std.array;
 import std.file;
 import std.path;
@@ -61,59 +61,28 @@ class DubRegistryWebFrontend {
 	}
 
 	@path("/")
-	void getHome(string sort = "updated", string category = null)
+	void getHome(string category = null, string sort = "updated")
 	{
-		// collect the package list
-		auto packapp = appender!(Json[])();
-		packapp.reserve(200);
-		if (category.length) {
-			foreach (pname; m_registry.availablePackages) {
-				auto pack = m_registry.getPackageInfo(pname);
-				foreach (c; pack.categories) {
-					if (c.get!string.startsWith(category)) {
-						packapp.put(pack);
-						break;
-					}
-				}
-			}
-		} else {
-			foreach (pack; m_registry.availablePackages)
-				packapp.put(m_registry.getPackageInfo(pack));
-		}
-		auto packages = packapp.data;
-
-		// sort by date of last version
-		string getDate(Json p) {
-			if( p.type != Json.Type.Object || "versions" !in p ) return null;
-			if( p.versions.length == 0 ) return null;
-			return p.versions[p.versions.length-1].date.get!string;
-		}
-		SysTime getDateAdded(Json p) {
-			return SysTime.fromISOExtString(p.dateAdded.get!string);
-		}
-		bool compare(Json a, Json b) {
-			bool a_has_ver = a.versions.get!(Json[]).any!(v => !v["version"].get!string.startsWith("~"));
-			bool b_has_ver = b.versions.get!(Json[]).any!(v => !v["version"].get!string.startsWith("~"));
-			if (a_has_ver != b_has_ver) return a_has_ver;
-			return getDate(a) > getDate(b);
-		}
-		switch (sort) {
-			default: std.algorithm.sort!((a, b) => compare(a, b))(packages); break;
-			case "name": std.algorithm.sort!((a, b) => a.name < b.name)(packages); break;
-			case "added": std.algorithm.sort!((a, b) => getDateAdded(a) > getDateAdded(b))(packages); break;
-		}
-
+		auto results = m_registry.searchPackages(null, category, sort).array;
+		if (sort == "updated")
+			// sort versioned packages to top for default search order
+			results.partition!(p => !p.version_.startsWith("~"), SwapStrategy.stable);
 		auto categories = m_categories;
 		auto categoryMap = m_categoryMap;
-		render!("home.dt", categories, categoryMap, packages);
+		render!("home.dt", categories, categoryMap, results);
 	}
 
 
-	void querySearch(string q = "")
+	void querySearch(string q, string category = null, string sort = "search")
 	{
-		auto results = m_registry.searchPackages(q);
+		auto results = m_registry.searchPackages(q, category, sort).array;
+		if (sort == "updated")
+			// sort versioned packages to top for default search order
+			results.partition!(p => !p.version_.startsWith("~"), SwapStrategy.stable);
 		auto queryString = q;
-		render!("search_results.dt", queryString, results);
+		auto categories = m_categories;
+		auto categoryMap = m_categoryMap;
+		render!("search_results.dt", queryString, categories, categoryMap, results);
 	}
 
 	void getGettingStarted() { render!("getting_started.dt"); }

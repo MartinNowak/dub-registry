@@ -9,24 +9,41 @@ block body
 
 	p Found #{results.length} packages.
 
+	- auto category = req.query.get("category", null);
+	- auto sort_mode = req.query.get("sort", null);
 	table
+
+		- static immutable browse_kinds = ["name;Name", "updated;Last update", "added;Registered", ";Description"];
 		tr
-			th Package
-			th Latest version
-			th Date
-			th Description
+			- foreach (i, c; browse_kinds)
+				- auto cp = c.split(";");
+				- if (cp[0].length == 0)
+					th= cp[1]
+				- else if (sort_mode == cp[0])
+					th.selected= cp[1]
+				- else
+					th
+						a(href="search?q=#{queryString}&sort=#{cp[0]}&category=#{category}")= cp[1]
+
 		- foreach (p; results)
 			- auto desc = p.info["description"].opt!string;
 			- auto ver = p.version_;
 			tr
 				td
+					- string image;
+					- if (auto pc = p.category in categoryMap)
+						- image = pc.imageName;
+					- else
+						- image = image = "unknown";
+					img.category-icon(src="images/categories/#{image}.png", title=image.replace(".", "/"))
 					a(href="packages/#{p.name}")= p.name
 				td.nobreak
 					- if (ver.length <= 20)
 						|= ver
 					- else
 						| #{ver[0 .. 18]}&hellip;
-				td.nobreak= formatDate(p.date)
+					span.dull.nobreak(title=formatDateTime(p.date))<> , #{formatFuzzyDate(p.date)}
+				td.nobreak(title=formatDateTime(p.dateAdded))= formatDate(p.dateAdded)
 				- if (desc.length <= 100)
 					td= desc
 				- else

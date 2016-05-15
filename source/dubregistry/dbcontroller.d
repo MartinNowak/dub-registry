@@ -131,7 +131,7 @@ class DbController {
 				["name": Bson(packname), "updateCounter": Bson(counter)],
 				["$set": ["versions": serializeToBson(new_versions), "updateCounter": Bson(counter+1)]],
 				["_id": true]);
-			
+
 			if (!res.isNull) {
 				updateKeywords(packname);
 				return;
@@ -177,7 +177,7 @@ class DbController {
 		return deserializeBson!(DbPackageVersion)(pack.versions[0]);
 	}
 
-	DbPackage[] searchPackages(string[] keywords)
+	DbPackage[] searchPackages(string[] keywords, string category, string sort)
 	{
 		Appender!(string[]) barekeywords;
 		foreach( kw; keywords ) {
@@ -194,22 +194,54 @@ class DbController {
 			return m_packages.find(["searchTerms": ["$all": barekeywords.data]]).map!(b => deserializeBson!DbPackage(b))();
 		} else {
 			// in the meantime, we'll perform a brute force search instead
+
+			auto query = Bson.emptyObject;
+			if (category.length)
+				// must match category or subcategory
+				query["categories"] = ["$regex": "^"~category.replace(".", "\\.")].serializeToBson;
+			Bson order, project = Bson.emptyObject;
+			switch (sort)
+			{
+			default:
+			// match by date of best (newest) version
+			case "updated":
+				project = ["versions": ["$slice": -1]].serializeToBson;
+				order = ["versions.0.date": -1].serializeToBson;
+				break;
+			case "name":
+				order = ["name": 1].serializeToBson;
+				break;
+			case "added":
+				order = ["_id": -1].serializeToBson;
+				break;
+			}
+
 			Appender!(DbPackage[]) pkgs;
-			Appender!(size_t[]) scores;
-			foreach (p; m_packages.find().map!(b => deserializeBson!DbPackage(b))) {
-				size_t score = 0;
-				foreach (t; p.searchTerms)
-					foreach (kw; barekeywords.data) {
-						auto dist = levenshteinDistance(t, kw);
-						if (dist <= 3 && dist+1 < kw.length) score += 3 - dist;
-					}
-				if (score > 0) {
+
+			auto matching = m_packages.find(query).sort(order).map!(b => deserializeBson!DbPackage(b));
+			if (!keywords.length)
+			{
+				foreach (p; matching)
 					pkgs ~= p;
-					scores ~= score;
+			}
+			else
+			{
+				Appender!(size_t[]) scores;
+				foreach (p; matching) {
+					size_t score = 0;
+					foreach (t; p.searchTerms)
+						foreach (kw; barekeywords.data) {
+							auto dist = levenshteinDistance(t, kw);
+							if (dist <= 3 && dist+1 < kw.length) score += 3 - dist;
+						}
+					if (score > 0) {
+						pkgs ~= p;
+						if (sort == "search") scores ~= score;
+					}
+					import std.range : zip;
+					if (sort == "search") std.algorithm.sort!((a, b) => a[1] > b[1])(zip(pkgs.data, scores.data));
 				}
 			}
-			import std.range : zip;
-			sort!((a, b) => a[1] > b[1])(zip(pkgs.data, scores.data));
 			return pkgs.data;
 		}
 	}

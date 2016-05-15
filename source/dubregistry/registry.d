@@ -103,12 +103,13 @@ class DubRegistry {
 		}
 	}
 
-	auto searchPackages(string query)
+	auto searchPackages(string query, string category=null, string sort="name")
 	{
-		static struct Info { string name; DbPackageVersion _base; alias _base this; }
+		static struct Info { string name, category; SysTime dateAdded; DbPackageVersion _base; alias _base this; }
 		auto keywords = query.split();
-		return m_db.searchPackages(keywords).map!(p =>
-			Info(p.name, m_db.getVersionInfo(p.name, p.versions[$ - 1].version_)));
+		return m_db.searchPackages(keywords, category, sort).map!(p =>
+			Info(p.name, p.categories.length ? p.categories.front : null, p._id.timeStamp,
+				 m_db.getVersionInfo(p.name, p.versions[$ - 1].version_)));
 	}
 
 	RepositoryInfo getRepositoryInfo(Json repository)
