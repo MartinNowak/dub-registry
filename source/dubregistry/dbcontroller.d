@@ -32,7 +32,7 @@ class DbController {
 		// migrations
 
 		// update package format
-		foreach(p; m_packages.find()){
+		foreach(p; m_packages.find(["branches": ["$exists": true]])) {
 			bool any_change = false;
 			if (p["branches"].type == Bson.Type.object) {
 				Bson[] branches;
