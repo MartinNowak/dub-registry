@@ -19,6 +19,13 @@ class DbController {
 	private {
 		MongoCollection m_packages;
 		MongoCollection m_downloads;
+
+		/// store version updates in an immutable, append-only ledger
+		MongoCollection m_versionUpdates;
+		/// sha1 checksum over all version updates
+		ubyte[20] m_versionUpdatesHash;
+		/// number of existing version updates
+		size_t m_versionUpdatesCount;
 	}
 
 	private alias bson = serializeToBson;
@@ -28,6 +35,7 @@ class DbController {
 		auto db = connectMongoDB("127.0.0.1").getDatabase(dbname);
 		m_packages = db["packages"];
 		m_downloads = db["downloads"];
+		m_versionUpdates = db["versionUpdates"];
 
 		// migrations
 
@@ -61,6 +69,41 @@ class DbController {
 		float rating = 0;
 		m_packages.update(["stats.rating": ["$exists": false]], ["$set": ["stats.rating": rating]], UpdateFlags.multiUpdate);
 
+		if (!loadLedger())
+		{
+			// seed version update ledger by replaying existing
+			// versions in commit date order
+			import std.stdio;
+			immutable proj = ["_id": false, "name": true, "versions": true];
+			auto packVersions = m_packages
+				.find(Bson.emptyObject, proj)
+				.map!((p) {
+					immutable name = p["name"].get!string;
+				    return p["versions"].get!(Bson[])
+						.map!((v) {
+							auto ver = v.deserializeBson!DbPackageVersion;
+							return DbPackageVersionUpdate(name, ver);
+						});
+			    })
+				.joiner
+				.array
+				.sort!((a, b) => a.date < b.date)
+				.release;
+
+			ubyte[20] hash;
+			foreach (i, ref pv; packVersions)
+			{
+				pv._id = i + 1;
+				pv.computeHash(hash);
+				hash = pv.hash;
+			}
+			m_versionUpdates.insert(packVersions);
+			m_versionUpdatesHash = hash;
+			m_versionUpdatesCount = packVersions.length;
+		}
+		logDiagnostic("Initialized version update ledger, #entries: %s, hash: %(%02X%).",
+					  m_versionUpdatesCount, m_versionUpdatesHash);
+
 		// create indices
 		m_packages.ensureIndex([tuple("name", 1)], IndexFlags.Unique);
 		m_packages.ensureIndex([tuple("stats.rating", 1)]);
@@ -80,10 +123,43 @@ class DbController {
 		];
 		doc["background"] = true;
 		db["system.indexes"].insert(doc);
+	}
 
-		// sort package versions newest to oldest
-		// TODO: likely can be removed as we're now sorting on insert
-		repairVersionOrder();
+	bool loadLedger()
+	{
+		auto latestVersionUpdates = m_versionUpdates.find().sort(["_id": -1]);
+		if (latestVersionUpdates.empty)
+			return false;
+		auto last = latestVersionUpdates.front.deserializeBson!DbPackageVersionUpdate;
+		m_versionUpdatesCount = last._id;
+		m_versionUpdatesHash = last.hash;
+		logDiagnostic("Loaded version update ledger, #entries: %s, hash: %(%02X%).",
+					  m_versionUpdatesCount, m_versionUpdatesHash);
+		return true;
+	}
+
+	void storeVersionUpdate(string packname, DbPackageVersion ver)
+	{
+		auto change = DbPackageVersionUpdate(packname, ver);
+		enforce(m_versionUpdates.findOne(
+					[
+						"packname": Bson(change.packname),
+						"version": Bson(change.version_),
+						"date": Bson(BsonDate(change.date)),
+						"commitID": Bson(change.commitID),
+					]).isNull(), "Duplicate version update " ~ change.to!string);
+		while (true)
+		{
+			change._id = m_versionUpdatesCount;
+			change.computeHash(m_versionUpdatesHash);
+			if (!collectException!MongoException(m_versionUpdates.insert(change)))
+				break;
+			if (!loadLedger())
+				assert(0, "Failed to reload ledger after insert conflict.");
+		}
+		// increment current ledger count and hash
+		m_versionUpdatesHash = change.hash;
+		++m_versionUpdatesCount;
 	}
 
 	void addPackage(ref DbPackage pack)
@@ -170,9 +246,11 @@ class DbController {
 	{
 		assert(ver.version_.startsWith("~") || ver.version_.isValidVersion());
 
-		size_t nretrys = 0;
+		storeVersionUpdate(packname, ver);
 
+		size_t nretrys = 0;
 		while (true) {
+			/// get currently stored package versions
 			auto pack = m_packages.findOne(["name": packname], ["versions": true, "updateCounter": true]);
 			auto counter = pack["updateCounter"].get!long;
 			auto versions = deserializeBson!(DbPackageVersion[])(pack["versions"]);
@@ -186,12 +264,14 @@ class DbController {
 
 			//assert((cast(Json)bversions).toString() == (cast(Json)serializeToBson(versions)).toString());
 
+			/// atomically update stored package versions
 			auto res = m_packages.findAndModify(
 				["name": Bson(packname), "updateCounter": Bson(counter)],
 				["$set": ["versions": serializeToBson(new_versions), "updateCounter": Bson(counter+1)]],
 				["_id": true]);
 
-			if (!res.isNull) return;
+			if (!res.isNull)
+				return;
 
 			enforce(nretrys++ < 20, format("Failed to store updated version list for %s", packname));
 			logDebug("Failed to update version list atomically, retrying...");
@@ -201,12 +281,15 @@ class DbController {
 	void removeVersion(string packname, string ver)
 	{
 		assert(ver.startsWith("~") || ver.isValidVersion());
+		auto packVer = DbPackageVersion(Clock.currTime(UTC()), "!" ~ ver);
+		storeVersionUpdate(packname, packVer);
 		m_packages.update(["name": packname], ["$pull": ["versions": ["version": ver]]]);
 	}
 
 	void updateVersion(string packname, DbPackageVersion ver)
 	{
 		assert(ver.version_.startsWith("~") || ver.version_.isValidVersion());
+		storeVersionUpdate(packname, ver);
 		m_packages.update(["name": packname, "versions.version": ver.version_], ["$set": ["versions.$": ver]]);
 	}
 
@@ -410,6 +493,30 @@ struct DbPackageVersion {
 	@optional string commitID;
 	Json info;
 	@optional string readme;
+}
+
+struct DbPackageVersionUpdate {
+	this(string packname, in ref DbPackageVersion ver) {
+		this.date = ver.date;
+		this.packname = packname;
+		this.version_ = ver.version_;
+		this.commitID = ver.commitID;
+	}
+
+	size_t _id; /// auto-incremented index of this entry
+	SysTime date;
+	string packname, version_;
+	@optional string commitID;
+	ubyte[20] hash; /// cumulated checksum over all entries up to including this one
+
+	void computeHash(in ref ubyte[20] previousHash)
+	{
+		import std.bitmanip : nativeToLittleEndian;
+		import std.digest.sha : sha1Of;
+		assert(_id != 0);
+
+		hash = sha1Of(previousHash, packname, version_, commitID, nativeToLittleEndian(_id));
+	}
 }
 
 struct DbPackageDownload {
